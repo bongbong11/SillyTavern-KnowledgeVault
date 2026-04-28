@@ -1,0 +1,9 @@
+{
+  "name": "Knowledge Vault",
+  "display_name": "지식창고 (Knowledge Vault)",
+  "version": "1.0.0",
+  "author": "봉봉",
+  "description": "캐릭터 인지 단계별 지식 관리 시스템",
+  "requires": [],
+  "js": "index.js"
+}
