@@ -1,5 +1,5 @@
 // 지식창고 (Knowledge Vault) v1.0
-// 단일 파일 버전
+// 완전판 - 플로팅 모니터, 설정 탭, 채팅방별 저장
 
 (function() {
     'use strict';
@@ -15,16 +15,27 @@
         persona: []
     };
     
-    // ===== 저장소 관리 =====
+    // ===== 저장소 관리 (채팅방별) =====
     const Storage = {
+        getChatId() {
+            const context = getContext();
+            return context?.chatId || context?.characterId || 'default';
+        },
+        
         init() {
-            const saved = localStorage.getItem(MODULE_NAME + '_knowledge');
+            const chatId = this.getChatId();
+            const key = MODULE_NAME + '_knowledge_' + chatId;
+            const saved = localStorage.getItem(key);
+            
             if (saved) {
                 try {
                     knowledgeData = JSON.parse(saved);
                 } catch (e) {
-                    console.error('[KV] 데이터 로드 실패:', e);
+                    console.error('[지식창고] 데이터 로드 실패:', e);
+                    knowledgeData = { world: [], persona: [] };
                 }
+            } else {
+                knowledgeData = { world: [], persona: [] };
             }
             
             const savedSettings = localStorage.getItem(MODULE_NAME + '_settings');
@@ -32,13 +43,17 @@
                 try {
                     settings = JSON.parse(savedSettings);
                 } catch (e) {
-                    console.error('[KV] 설정 로드 실패:', e);
+                    console.error('[지식창고] 설정 로드 실패:', e);
                 }
             }
+            
+            console.log(`[지식창고] 채팅방 "${chatId}" 데이터 로드 완료`);
         },
         
         save() {
-            localStorage.setItem(MODULE_NAME + '_knowledge', JSON.stringify(knowledgeData));
+            const chatId = this.getChatId();
+            const key = MODULE_NAME + '_knowledge_' + chatId;
+            localStorage.setItem(key, JSON.stringify(knowledgeData));
             localStorage.setItem(MODULE_NAME + '_settings', JSON.stringify(settings));
         }
     };
@@ -85,13 +100,12 @@ Format as JSON:
             if (!match) throw new Error('JSON 응답 없음');
             
             const levels = JSON.parse(match[0]);
-            levels.lv4 = fullContent; // 원본 사용
+            levels.lv4 = fullContent;
             return levels;
             
         } catch (error) {
-            console.error('[KV] 단계 생성 실패:', error);
+            console.error('[지식창고] 단계 생성 실패:', error);
             
-            // 폴백: 수동 분할
             const sentences = fullContent.split(/[.!?]+/).filter(s => s.trim());
             const words = fullContent.split(' ').filter(w => w.trim());
             
@@ -109,14 +123,14 @@ Format as JSON:
     function renderSettingsTab() {
         if ($('#kv-settings').length) return;
         
-        const profiles = extension_settings.connectionManager?.profiles || [];
+        const profiles = extension_settings?.connectionManager?.profiles || [];
         const profileOptions = profiles.map(p => 
             `<option value="${p.name}" ${settings.profileName === p.name ? 'selected' : ''}>${p.name}</option>`
         ).join('');
         
         const html = `
-        <div id="kv-settings" class="kv-settings">
-            <h3>📚 지식창고 API 설정</h3>
+        <div id="kv-settings" style="margin:20px 0;">
+            <h3 style="margin:0 0 16px 0;">📚 지식창고 API 설정</h3>
             
             <div style="margin-bottom:20px;">
                 <label style="display:block;margin-bottom:8px;font-size:14px;font-weight:600;">연결 프로필</label>
@@ -142,14 +156,53 @@ Format as JSON:
             <button id="kv-save-settings" class="menu_button" style="width:100%;">💾 설정 저장</button>
         </div>`;
         
-        $('#extensions_settings').append(html);
+        const container = $('#extensions_settings');
+        if (container.length) {
+            container.append(html);
+            
+            $('#kv-save-settings').on('click', () => {
+                settings.profileName = $('#kv-profile-select').val();
+                settings.enableTranslation = $('#kv-enable-translation').prop('checked');
+                Storage.save();
+                toastr.success('설정 저장됨', '지식창고');
+            });
+            
+            console.log('[지식창고] 설정 탭 렌더링 완료');
+        }
+    }
+    
+    // ===== UI: 플로팅 모니터 =====
+    function renderFloatingMonitor() {
+        if ($('#kv-floating').length) return;
         
-        $('#kv-save-settings').on('click', () => {
-            settings.profileName = $('#kv-profile-select').val();
-            settings.enableTranslation = $('#kv-enable-translation').prop('checked');
-            Storage.save();
-            toastr.success('설정 저장됨', '지식창고');
+        const monitor = $(`
+        <div id="kv-floating" style="
+            position:fixed; bottom:80px; right:16px; z-index:9999;
+            width:50px; height:50px; border-radius:50%;
+            background:var(--SmartThemeBlurTintColor, rgba(99,102,241,0.9));
+            border:2px solid rgba(99,102,241,0.5);
+            box-shadow:0 4px 12px rgba(0,0,0,0.3);
+            display:flex; align-items:center; justify-content:center;
+            cursor:pointer; font-size:24px; transition:all 0.2s;
+        ">
+            📚
+        </div>
+        `);
+        
+        monitor.on('mouseenter', function() {
+            $(this).css('transform', 'scale(1.1)');
         });
+        
+        monitor.on('mouseleave', function() {
+            $(this).css('transform', 'scale(1)');
+        });
+        
+        monitor.on('click', () => {
+            openMainPanel();
+        });
+        
+        $('body').append(monitor);
+        console.log('[지식창고] 플로팅 모니터 렌더링 완료');
     }
     
     // ===== UI: 메인 패널 =====
@@ -162,24 +215,24 @@ Format as JSON:
         const panel = $(`
         <div id="kv-main-panel" style="
             position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
-            width:680px; max-height:85vh; display:flex; flex-direction:column;
+            width:min(680px, 90vw); max-height:85vh; display:flex; flex-direction:column;
             background:var(--SmartThemeBlurTintColor, #1e1e2e);
             border:1px solid var(--SmartThemeBorderColor, #555);
             border-radius:14px; z-index:10000;
             box-shadow:0 16px 48px rgba(0,0,0,0.6);
             font-family:inherit; overflow:hidden;
         ">
-            <div style="padding:20px 24px;border-bottom:1px solid rgba(255,255,255,0.08);display:flex;justify-content:space-between;align-items:center;">
-                <h2 style="margin:0;font-size:20px;">📚 지식창고</h2>
+            <div style="padding:16px 20px;border-bottom:1px solid rgba(255,255,255,0.08);display:flex;justify-content:space-between;align-items:center;flex-shrink:0;">
+                <h2 style="margin:0;font-size:18px;">📚 지식창고</h2>
                 <button class="kv-close" style="border:none;background:transparent;cursor:pointer;color:#aaa;font-size:20px;padding:0;">✕</button>
             </div>
             
-            <div style="display:flex;border-bottom:1px solid rgba(255,255,255,0.08);">
-                <button class="kv-tab active" data-tab="world" style="flex:1;padding:12px;border:none;background:white;color:#c17f5a;cursor:pointer;font-weight:600;border-bottom:2px solid #c17f5a;">🌍 세계관</button>
-                <button class="kv-tab" data-tab="persona" style="flex:1;padding:12px;border:none;background:transparent;color:#888;cursor:pointer;border-bottom:2px solid transparent;">👤 페르소나</button>
+            <div style="display:flex;border-bottom:1px solid rgba(255,255,255,0.08);flex-shrink:0;">
+                <button class="kv-tab active" data-tab="world" style="flex:1;padding:10px;border:none;background:white;color:#c17f5a;cursor:pointer;font-weight:600;border-bottom:2px solid #c17f5a;font-size:14px;">🌍 세계관</button>
+                <button class="kv-tab" data-tab="persona" style="flex:1;padding:10px;border:none;background:transparent;color:#888;cursor:pointer;border-bottom:2px solid transparent;font-size:14px;">👤 페르소나</button>
             </div>
             
-            <div class="kv-content" style="flex:1;overflow-y:auto;padding:24px;">
+            <div class="kv-content" style="flex:1;overflow-y:auto;padding:20px;">
                 <!-- 탭 내용 -->
             </div>
         </div>
@@ -215,22 +268,22 @@ Format as JSON:
         
         if (tab === 'world') {
             content.html(`
-                <div style="margin-bottom:24px;padding:20px;background:rgba(255,255,255,0.04);border-radius:12px;">
-                    <h3 style="margin:0 0 16px 0;font-size:16px;">세계관 지식 추가</h3>
-                    <input type="text" id="kv-world-title" placeholder="제목 (예: Nano Medicine)" class="text_pole" style="width:100%;margin-bottom:12px;">
-                    <input type="text" id="kv-world-keywords" placeholder="키워드 (쉼표로 구분)" class="text_pole" style="width:100%;margin-bottom:12px;">
-                    <textarea id="kv-world-content" placeholder="전체 내용 (영어로 작성)" class="textarea_compact" rows="6" style="width:100%;margin-bottom:12px;font-family:monospace;"></textarea>
+                <div style="margin-bottom:20px;padding:16px;background:rgba(255,255,255,0.04);border-radius:10px;">
+                    <h3 style="margin:0 0 12px 0;font-size:15px;">세계관 지식 추가</h3>
+                    <input type="text" id="kv-world-title" placeholder="제목 (예: Nano Medicine)" class="text_pole" style="width:100%;margin-bottom:10px;box-sizing:border-box;">
+                    <input type="text" id="kv-world-keywords" placeholder="키워드 (쉼표로 구분)" class="text_pole" style="width:100%;margin-bottom:10px;box-sizing:border-box;">
+                    <textarea id="kv-world-content" placeholder="전체 내용 (영어로 작성)" class="textarea_compact" rows="5" style="width:100%;margin-bottom:10px;font-family:monospace;box-sizing:border-box;"></textarea>
                     <button id="kv-generate" class="menu_button" style="width:100%;">✨ 5단계 자동 생성</button>
                     
-                    <div id="kv-preview" style="display:none;margin-top:20px;padding:16px;background:rgba(0,0,0,0.2);border-radius:8px;">
-                        <h4 style="margin:0 0 12px 0;">생성된 단계</h4>
+                    <div id="kv-preview" style="display:none;margin-top:16px;padding:12px;background:rgba(0,0,0,0.2);border-radius:8px;">
+                        <h4 style="margin:0 0 10px 0;font-size:13px;">생성된 단계</h4>
                         ${[0,1,2,3,4].map(lv => `
-                            <div style="margin-bottom:12px;">
-                                <label style="display:block;margin-bottom:4px;font-size:13px;">
+                            <div style="margin-bottom:10px;">
+                                <label style="display:block;margin-bottom:4px;font-size:12px;">
                                     <strong>Lv.${lv} ${Levels.names[lv]}</strong>
-                                    <span style="margin-left:8px;color:#888;font-size:12px;">${Levels.descriptions[lv]}</span>
+                                    <span style="margin-left:6px;color:#888;font-size:11px;">${Levels.descriptions[lv]}</span>
                                 </label>
-                                <textarea id="kv-lv${lv}" class="textarea_compact" rows="2" ${lv===0?'disabled':''} style="width:100%;font-size:13px;"></textarea>
+                                <textarea id="kv-lv${lv}" class="textarea_compact" rows="2" ${lv===0?'disabled':''} style="width:100%;font-size:12px;box-sizing:border-box;"></textarea>
                             </div>
                         `).join('')}
                         <div style="display:flex;gap:8px;">
@@ -241,7 +294,7 @@ Format as JSON:
                 </div>
                 
                 <div>
-                    <h3 style="margin:0 0 16px 0;font-size:16px;">저장된 세계관 지식</h3>
+                    <h3 style="margin:0 0 12px 0;font-size:15px;">저장된 세계관 지식</h3>
                     <div id="kv-world-list"></div>
                 </div>
             `);
@@ -313,15 +366,15 @@ Format as JSON:
         } else {
             // 페르소나 탭
             content.html(`
-                <div style="margin-bottom:24px;padding:20px;background:rgba(255,255,255,0.04);border-radius:12px;">
-                    <h3 style="margin:0 0 16px 0;font-size:16px;">페르소나 지식 추가</h3>
-                    <input type="text" id="kv-persona-title" placeholder="제목" class="text_pole" style="width:100%;margin-bottom:12px;">
-                    <textarea id="kv-persona-content" placeholder="내용 (영어로 작성)" class="textarea_compact" rows="8" style="width:100%;margin-bottom:12px;font-family:monospace;"></textarea>
+                <div style="margin-bottom:20px;padding:16px;background:rgba(255,255,255,0.04);border-radius:10px;">
+                    <h3 style="margin:0 0 12px 0;font-size:15px;">페르소나 지식 추가</h3>
+                    <input type="text" id="kv-persona-title" placeholder="제목" class="text_pole" style="width:100%;margin-bottom:10px;box-sizing:border-box;">
+                    <textarea id="kv-persona-content" placeholder="내용 (영어로 작성)" class="textarea_compact" rows="7" style="width:100%;margin-bottom:10px;font-family:monospace;box-sizing:border-box;"></textarea>
                     <button id="kv-persona-save" class="menu_button" style="width:100%;">💾 저장</button>
                 </div>
                 
                 <div>
-                    <h3 style="margin:0 0 16px 0;font-size:16px;">저장된 페르소나 지식</h3>
+                    <h3 style="margin:0 0 12px 0;font-size:15px;">저장된 페르소나 지식</h3>
                     <div id="kv-persona-list"></div>
                 </div>
             `);
@@ -359,17 +412,17 @@ Format as JSON:
         const list = $('#kv-world-list');
         
         if (knowledgeData.world.length === 0) {
-            list.html('<p style="text-align:center;color:#666;padding:30px 0;">저장된 지식이 없습니다</p>');
+            list.html('<p style="text-align:center;color:#666;padding:24px 0;font-size:13px;">저장된 지식이 없습니다</p>');
             return;
         }
         
         list.html(knowledgeData.world.map(k => `
-            <div style="padding:12px;margin-bottom:8px;background:rgba(255,255,255,0.04);border-radius:8px;display:flex;justify-content:space-between;align-items:center;">
-                <div>
-                    <strong>${k.title}</strong>
-                    <div style="font-size:12px;color:#888;margin-top:4px;">키워드: ${k.keywords.join(', ')}</div>
+            <div style="padding:10px;margin-bottom:8px;background:rgba(255,255,255,0.04);border-radius:8px;display:flex;justify-content:space-between;align-items:center;">
+                <div style="flex:1;min-width:0;">
+                    <strong style="font-size:14px;">${k.title}</strong>
+                    <div style="font-size:11px;color:#888;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">키워드: ${k.keywords.join(', ')}</div>
                 </div>
-                <button class="kv-delete" data-id="${k.id}" style="padding:4px 10px;border:1px solid #555;background:transparent;color:#aaa;border-radius:6px;cursor:pointer;font-size:12px;">🗑️ 삭제</button>
+                <button class="kv-delete" data-id="${k.id}" style="padding:4px 10px;border:1px solid #555;background:transparent;color:#aaa;border-radius:6px;cursor:pointer;font-size:11px;margin-left:8px;flex-shrink:0;">🗑️</button>
             </div>
         `).join(''));
         
@@ -388,17 +441,17 @@ Format as JSON:
         const list = $('#kv-persona-list');
         
         if (knowledgeData.persona.length === 0) {
-            list.html('<p style="text-align:center;color:#666;padding:30px 0;">저장된 지식이 없습니다</p>');
+            list.html('<p style="text-align:center;color:#666;padding:24px 0;font-size:13px;">저장된 지식이 없습니다</p>');
             return;
         }
         
         list.html(knowledgeData.persona.map(k => `
-            <div style="padding:12px;margin-bottom:8px;background:rgba(255,255,255,0.04);border-radius:8px;display:flex;justify-content:space-between;align-items:center;">
-                <div>
-                    <strong>${k.title}</strong>
-                    <div style="font-size:12px;color:#aaa;margin-top:4px;">${k.content.substring(0, 60)}...</div>
+            <div style="padding:10px;margin-bottom:8px;background:rgba(255,255,255,0.04);border-radius:8px;display:flex;justify-content:space-between;align-items:center;">
+                <div style="flex:1;min-width:0;">
+                    <strong style="font-size:14px;">${k.title}</strong>
+                    <div style="font-size:11px;color:#aaa;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${k.content.substring(0, 50)}...</div>
                 </div>
-                <button class="kv-delete-persona" data-id="${k.id}" style="padding:4px 10px;border:1px solid #555;background:transparent;color:#aaa;border-radius:6px;cursor:pointer;font-size:12px;">🗑️ 삭제</button>
+                <button class="kv-delete-persona" data-id="${k.id}" style="padding:4px 10px;border:1px solid #555;background:transparent;color:#aaa;border-radius:6px;cursor:pointer;font-size:11px;margin-left:8px;flex-shrink:0;">🗑️</button>
             </div>
         `).join(''));
         
@@ -419,10 +472,15 @@ Format as JSON:
         
         Storage.init();
         
-        // 설정 탭
+        // 설정 탭 (천천히)
         setTimeout(() => {
             renderSettingsTab();
-        }, 500);
+        }, 2000);
+        
+        // 플로팅 모니터
+        setTimeout(() => {
+            renderFloatingMonitor();
+        }, 1500);
         
         // 마법봉 메뉴
         setTimeout(() => {
@@ -442,7 +500,7 @@ Format as JSON:
             
             $('#extensionsMenu').append(btn);
             console.log('[지식창고] 마법봉 메뉴 추가 완료');
-        }, 1000);
+        }, 2500);
         
         console.log('[지식창고] 로드 완료 ✅');
     });
